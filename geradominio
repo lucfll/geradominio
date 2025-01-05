@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# Caminho dos arquivos de saída
+OUTPUT_FILE="/root/dominios_criados.txt"
+UUID_FILE="/root/uuid_maquina.txt"
+API_URL="http://192.168.10.99:8080/alocar_porta"
+
+# Verifica se a UUID já foi gerada e salva, caso contrário, cria uma nova UUID
+if [ ! -f "$UUID_FILE" ]; then
+    # Gerar uma UUID única sem traços
+    UUID=$(uuidgen | tr -d '-')
+    echo "$UUID" > "$UUID_FILE"
+else
+    # Caso a UUID já exista, pega o valor armazenado
+    UUID=$(cat "$UUID_FILE")
+fi
+
+# Extrair os 3 primeiros caracteres da UUID
+UUID_PART=${UUID:0:3}
+
+# Detectar a interface com endereço MAC válido
+INTERFACE=$(ls /sys/class/net | grep -Ev 'lo|bonding_masters' | head -n 1)
+
+if [ -z "$INTERFACE" ]; then
+  echo "Nenhuma interface de rede encontrada."
+  exit 1
+fi
+
+# Obter o endereço MAC da interface detectada
+MAC_ADDRESS=$(cat /sys/class/net/$INTERFACE/address | tr '[:lower:]' '[:upper:]')
+
+# Remover os dois pontos do endereço MAC
+MAC_CLEAN=$(echo "$MAC_ADDRESS" | tr -d ":")
+
+# Extrair os 4 primeiros caracteres do MAC
+MAC_UNIQUE=${MAC_CLEAN:6:4}
+
+# Montar o domínio em minúsculo
+DOMAIN="${UUID_PART}${MAC_UNIQUE}.supernova.local"
+DOMAIN=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]')
+
+# Verificar se o domínio já está registrado com uma porta alocada no arquivo
+EXISTING_PORT=$(grep "^${DOMAIN}:" "$OUTPUT_FILE" | cut -d ':' -f2)
+
+if [ -n "$EXISTING_PORT" ]; then
+    # Se o domínio já tiver uma porta alocada, informar o domínio e a porta
+    echo "O domínio ${DOMAIN} já está alocado com a porta ${EXISTING_PORT}."
+    exit 0
+fi
+
+# Enviar a requisição para alocar a porta no servidor da nuvem
+response=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"dominio\":\"$DOMAIN\"}" $API_URL)
+
+# Verificar se a resposta contém erro ou é inválida
+if echo "$response" | jq empty > /dev/null 2>&1; then
+    PORT=$(echo "$response" | jq -r '.porta')
+else
+    echo "Erro: Resposta da API inválida. Resposta recebida: $response"
+    exit 1
+fi
+
+# Verificar se a porta foi alocada
+if [ "$PORT" != "null" ]; then
+    # Registrar o novo domínio e porta no arquivo
+    echo "${DOMAIN}:${PORT}" >> "$OUTPUT_FILE"
+    echo "Domínio e porta alocados com sucesso:"
+    echo "Domínio: $DOMAIN"
+    echo "Porta: $PORT"
+    echo "Informações salvas em: $OUTPUT_FILE"
+else
+    echo "Erro: Não foi possível alocar uma porta. Resposta da API: $response"
+fi
