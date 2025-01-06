@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Verifica se o jq está instalado, caso contrário, instala
+if ! command -v jq &> /dev/null; then
+    echo "jq não encontrado, instalando..."
+    sudo apt-get update
+    sudo apt-get install -y jq
+fi
+
 # Caminho dos arquivos de saída
 OUTPUT_FILE="/root/dominios_criados.txt"
 UUID_FILE="/root/uuid_maquina.txt"
